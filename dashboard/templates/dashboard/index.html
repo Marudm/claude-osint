@@ -1,0 +1,250 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<div class="topbar">
+    <h1>🔍 Intelligence Analyst Dashboard</h1>
+    <div class="topbar-right">
+        <span style="color:#4a9eff; font-size:11px;" id="clock"></span>
+    </div>
+</div>
+
+<!-- SEARCH BAR -->
+<div style="display:flex; gap:10px; margin-bottom:25px;">
+    <div class="search-bar" style="max-width:100%;">
+        <span>⌕</span>
+        <input type="text" id="targetInput" placeholder="Ingresá una IP o dominio para analizar... ej: 8.8.8.8 o google.com" />
+    </div>
+    <button class="btn btn-primary" onclick="runScan()">▶ SCAN</button>
+</div>
+
+<!-- TERMINAL DE PROGRESO -->
+<div class="terminal" id="terminal">
+    <div class="line"><span class="time">[--:--:--]</span> <span class="ok">Claude OSINT Platform v1.0 lista.</span></div>
+    <div class="line"><span class="time">[--:--:--]</span> Ingresá una IP o dominio y presioná SCAN para comenzar.</div>
+</div>
+
+<!-- STATS -->
+<div class="stats-grid" style="margin-top:20px;" id="statsGrid">
+    <div class="stat-card">
+        <div class="number" id="statIP">—</div>
+        <div class="label">IP Analizada</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" id="statReports">—</div>
+        <div class="label">Reportes de Abuso</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" id="statScore">—</div>
+        <div class="label">Abuse Score</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" id="statCountry">—</div>
+        <div class="label">País</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" id="statFindings">—</div>
+        <div class="label">Hallazgos</div>
+    </div>
+</div>
+
+<!-- GRID PRINCIPAL -->
+<div class="grid-3" id="mainGrid" style="display:none;">
+    <div>
+        <!-- INFO -->
+        <div class="card" style="margin-bottom:20px;">
+            <h3>📋 Target Overview</h3>
+            <div id="targetOverview"></div>
+        </div>
+        <!-- MAPA -->
+        <div class="card">
+            <h3>🗺️ Geolocalización</h3>
+            <div id="map"></div>
+        </div>
+    </div>
+    <div>
+        <!-- RISK SCORE -->
+        <div class="card" style="margin-bottom:20px;">
+            <h3>⚠️ Risk Score</h3>
+            <div class="risk-gauge">
+                <div class="risk-number" id="riskNumber">0</div>
+                <div class="risk-label" id="riskLabel">ANALIZANDO...</div>
+            </div>
+        </div>
+        <!-- FINDINGS -->
+        <div class="card">
+            <h3>🔎 Hallazgos OSINT</h3>
+            <div id="findingsList"></div>
+        </div>
+    </div>
+</div>
+
+<!-- QUICK ACTIONS -->
+<div class="card">
+    <h3>⚡ Quick Actions</h3>
+    <div class="quick-actions">
+        <div class="action-btn active-btn" onclick="runScan()">
+            <span class="icon">🔍</span> Full Scan
+        </div>
+        <div class="action-btn" onclick="copyResults()">
+            <span class="icon">📋</span> Copiar Resultados
+        </div>
+        <div class="action-btn" onclick="clearAll()">
+            <span class="icon">🗑️</span> Limpiar
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let map = null;
+let marker = null;
+let lastResults = null;
+
+// Reloj
+function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent = now.toLocaleTimeString('es-AR');
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+function log(msg, type='ok') {
+    const terminal = document.getElementById('terminal');
+    const now = new Date().toLocaleTimeString('es-AR');
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.innerHTML = `<span class="time">[${now}]</span> <span class="${type}">${msg}</span>`;
+    terminal.appendChild(div);
+    terminal.scrollTop = terminal.scrollHeight;
+}
+
+async function runScan() {
+    const target = document.getElementById('targetInput').value.trim();
+    if (!target) { log('⚠️ Ingresá una IP o dominio primero.', 'warn'); return; }
+
+    log(`Iniciando análisis OSINT para: ${target}...`);
+    log('Resolviendo IP...', 'time');
+    log('Consultando geolocalización...', 'time');
+    log('Verificando base de datos de abuso...', 'time');
+
+    try {
+        const response = await fetch('/api/scan/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target })
+        });
+        const data = await response.json();
+        lastResults = data;
+
+        log(`✓ Análisis completado para ${target}`, 'ok');
+        renderResults(data);
+    } catch(e) {
+        log(`✗ Error: ${e.message}`, 'err');
+    }
+}
+
+function renderResults(data) {
+    const ip = data.ip_info || {};
+    const abuse = data.abuse_info || {};
+    const risk = data.risk_score || 0;
+
+    // Stats
+    document.getElementById('statIP').textContent = ip.ip || '—';
+    document.getElementById('statReports').textContent = abuse.totalReports ?? '—';
+    document.getElementById('statScore').textContent = abuse.abuseConfidenceScore ?? '—';
+    document.getElementById('statCountry').textContent = ip.country || '—';
+    document.getElementById('statFindings').textContent = data.findings?.length || 0;
+
+    // Mostrar grid
+    document.getElementById('mainGrid').style.display = 'grid';
+
+    // Target Overview
+    document.getElementById('targetOverview').innerHTML = `
+        <div class="info-row"><span class="key">Target</span><span class="val">${data.target}</span></div>
+        <div class="info-row"><span class="key">IP</span><span class="val">${ip.ip || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">País</span><span class="val">${ip.country || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">Ciudad</span><span class="val">${ip.city || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">ISP</span><span class="val">${ip.isp || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">Organización</span><span class="val">${ip.org || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">Uso</span><span class="val">${abuse.usageType || 'N/A'}</span></div>
+        <div class="info-row"><span class="key">IP Pública</span>
+            <span class="val"><span class="badge ${abuse.isPublic ? 'badge-blue' : 'badge-green'}">${abuse.isPublic ? 'Sí' : 'No'}</span></span>
+        </div>
+    `;
+
+    // Risk Score
+    const riskEl = document.getElementById('riskNumber');
+    const riskLabel = document.getElementById('riskLabel');
+    riskEl.textContent = risk;
+    if (risk < 30) {
+        riskEl.className = 'risk-number risk-low';
+        riskLabel.textContent = '✅ BAJO RIESGO';
+    } else if (risk < 70) {
+        riskEl.className = 'risk-number risk-medium';
+        riskLabel.textContent = '⚠️ RIESGO MEDIO';
+    } else {
+        riskEl.className = 'risk-number risk-high';
+        riskLabel.textContent = '🚨 ALTO RIESGO';
+    }
+
+    // Findings
+    const findingsEl = document.getElementById('findingsList');
+    if (data.findings && data.findings.length > 0) {
+        findingsEl.innerHTML = data.findings.map(f => `
+            <div class="finding-item">
+                <span>${f}</span>
+                <span class="finding-time">${new Date().toLocaleTimeString('es-AR')}</span>
+            </div>
+        `).join('');
+    } else {
+        findingsEl.innerHTML = '<div class="finding-item"><span class="ok">✅ Sin hallazgos de riesgo detectados</span></div>';
+    }
+
+    // Mapa
+    const lat = ip.lat || 0;
+    const lon = ip.lon || 0;
+    if (lat && lon) {
+        if (!map) {
+            map = L.map('map').setView([lat, lon], 6);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+        } else {
+            map.setView([lat, lon], 6);
+            if (marker) map.removeLayer(marker);
+        }
+        marker = L.marker([lat, lon])
+            .addTo(map)
+            .bindPopup(`<b>${data.target}</b><br>${ip.city}, ${ip.country}`)
+            .openPopup();
+    }
+}
+
+function copyResults() {
+    if (!lastResults) { log('⚠️ Primero ejecutá un scan.', 'warn'); return; }
+    const text = JSON.stringify(lastResults, null, 2);
+    navigator.clipboard.writeText(text);
+    log('✓ Resultados copiados al portapapeles.', 'ok');
+}
+
+function clearAll() {
+    document.getElementById('targetInput').value = '';
+    document.getElementById('mainGrid').style.display = 'none';
+    document.getElementById('statIP').textContent = '—';
+    document.getElementById('statReports').textContent = '—';
+    document.getElementById('statScore').textContent = '—';
+    document.getElementById('statCountry').textContent = '—';
+    document.getElementById('statFindings').textContent = '—';
+    log('Panel limpiado.', 'time');
+}
+
+// Enter para escanear
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('targetInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') runScan();
+    });
+});
+</script>
+{% endblock %}
